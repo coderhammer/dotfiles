@@ -17,3 +17,22 @@ if [ -n "${CLAUDE_CREDENTIALS:-}" ]; then
 else
   echo "⚠ CLAUDE_CREDENTIALS not set, skipping"
 fi
+
+# Skip onboarding wizard on first launch
+python3 - <<'EOF'
+import json, os
+
+path = os.path.expanduser("~/.claude.json")
+patch = {"hasCompletedOnboarding": True, "lastOnboardingVersion": "2.1.92"}
+
+data = {}
+if os.path.exists(path):
+    with open(path) as f:
+        data = json.load(f)
+
+data.update(patch)
+
+with open(path, "w") as f:
+    json.dump(data, f, indent=2)
+EOF
+echo "✓ Claude onboarding skipped"
