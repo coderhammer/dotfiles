@@ -10,12 +10,15 @@ mkdir -p ~/.claude
 cp "$DOTFILES_DIR/claude/settings.json" ~/.claude/settings.json
 echo "✓ Claude settings"
 
-# Credentials (via secret env variable)
-if [ -n "${CLAUDE_CREDENTIALS:-}" ]; then
-  echo "$CLAUDE_CREDENTIALS" > ~/.claude/.credentials.json
-  echo "✓ Claude credentials"
+# Auth: long-lived OAuth token from `claude setup-token`.
+# Passed as a secret env var at install time, written to a 0600 file that
+# zsh sources on every shell start (so `claude` never prompts to re-login).
+if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  mkdir -p ~/.config/claude
+  ( umask 177; printf 'export CLAUDE_CODE_OAUTH_TOKEN=%q\n' "$CLAUDE_CODE_OAUTH_TOKEN" > ~/.config/claude/token.env )
+  echo "✓ Claude OAuth token"
 else
-  echo "⚠ CLAUDE_CREDENTIALS not set, skipping"
+  echo "⚠ CLAUDE_CODE_OAUTH_TOKEN not set, skipping"
 fi
 
 # Skip onboarding wizard on first launch
@@ -37,6 +40,15 @@ with open(path, "w") as f:
 EOF
 echo "✓ Claude onboarding skipped"
 
-# Zsh
-cat "$DOTFILES_DIR/zsh/.zshrc" >> ~/.zshrc
-echo "✓ Zsh config"
+# Zsh (idempotent: append once, guarded by a marker)
+ZSH_MARKER="# >>> dotfiles zsh >>>"
+if grep -qF "$ZSH_MARKER" ~/.zshrc 2>/dev/null; then
+  echo "✓ Zsh config (already present)"
+else
+  {
+    echo "$ZSH_MARKER"
+    cat "$DOTFILES_DIR/zsh/.zshrc"
+    echo "# <<< dotfiles zsh <<<"
+  } >> ~/.zshrc
+  echo "✓ Zsh config"
+fi
