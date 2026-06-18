@@ -46,7 +46,8 @@ if grep -qF "$ZSH_MARKER" ~/.zshrc 2>/dev/null; then
   echo "✓ Zsh config (already present)"
 else
   {
-    echo "$ZSH_MARKER"
+    echo ""              # leading newline: existing ~/.zshrc may lack a trailing one,
+    echo "$ZSH_MARKER"   # which would otherwise glue the marker onto the last line
     cat "$DOTFILES_DIR/zsh/.zshrc"
     echo "# <<< dotfiles zsh <<<"
   } >> ~/.zshrc
