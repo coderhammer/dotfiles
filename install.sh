@@ -15,10 +15,23 @@ echo "✓ Claude settings"
 # zsh sources on every shell start (so `claude` never prompts to re-login).
 if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
   mkdir -p ~/.config/claude
-  ( umask 177; printf 'export CLAUDE_CODE_OAUTH_TOKEN=%q\n' "$CLAUDE_CODE_OAUTH_TOKEN" > ~/.config/claude/token.env )
+  ( umask 177; printf 'export CLAUDE_CODE_OAUTH_TOKEN=%q
+' "$CLAUDE_CODE_OAUTH_TOKEN" > ~/.config/claude/token.env )
   echo "✓ Claude OAuth token"
 else
   echo "⚠ CLAUDE_CODE_OAUTH_TOKEN not set, skipping"
+fi
+
+# gcloud: write ADC user credentials from env var, configure CLI to use them.
+# GOOGLE_APPLICATION_CREDENTIALS_JSON holds the authorized_user JSON (refresh token).
+if [ -n "${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" ]; then
+  mkdir -p ~/.config/gcloud
+  ( umask 177; echo "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > ~/.config/gcloud/application_default_credentials.json )
+  gcloud config set auth/credential_file_override ~/.config/gcloud/application_default_credentials.json --quiet 2>/dev/null || true
+  ( umask 177; echo 'export GOOGLE_APPLICATION_CREDENTIALS="$HOME/.config/gcloud/application_default_credentials.json"' > ~/.config/gcloud/auth.env )
+  echo "✓ gcloud auth"
+else
+  echo "⚠ GOOGLE_APPLICATION_CREDENTIALS_JSON not set, skipping"
 fi
 
 # Skip onboarding wizard on first launch
