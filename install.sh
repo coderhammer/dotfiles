@@ -26,10 +26,50 @@ fi
 # GOOGLE_APPLICATION_CREDENTIALS_JSON holds the authorized_user JSON (refresh token).
 if [ -n "${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" ]; then
   mkdir -p ~/.config/gcloud
-  ( umask 177; echo "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > ~/.config/gcloud/application_default_credentials.json )
-  gcloud config set auth/credential_file_override ~/.config/gcloud/application_default_credentials.json --quiet 2>/dev/null || true
-  ( umask 177; echo 'export GOOGLE_APPLICATION_CREDENTIALS="$HOME/.config/gcloud/application_default_credentials.json"' > ~/.config/gcloud/auth.env )
-  echo "✓ gcloud auth"
+  CRED_FILE=~/.config/gcloud/application_default_credentials.json
+  # The secret sometimes arrives wrapped in an extra layer of quotes or
+  # JSON-string-encoded (each " became \"). Normalize it and validate that the
+  # result is real JSON before writing, so a malformed secret fails loudly
+  # instead of silently producing an invalid credentials file.
+  if GOOGLE_APPLICATION_CREDENTIALS_JSON="$GOOGLE_APPLICATION_CREDENTIALS_JSON" \
+     CRED_FILE="$CRED_FILE" python3 - <<'EOF'
+import json, os
+
+raw = os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"]
+path = os.environ["CRED_FILE"]
+
+def normalize(s):
+    s = s.strip()
+    # Peel up to two layers: a JSON string that encodes the JSON (double-encoded),
+    # or plain surrounding quotes pasted around the object.
+    for _ in range(2):
+        try:
+            obj = json.loads(s)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(obj, dict):
+            return obj          # got the actual credentials object
+        if isinstance(obj, str):
+            s = obj             # unwrapped one layer, try again
+            continue
+        return None
+    return None
+
+obj = normalize(raw)
+if obj is None:
+    raise SystemExit("could not parse GOOGLE_APPLICATION_CREDENTIALS_JSON as JSON")
+
+fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as f:
+    json.dump(obj, f)
+EOF
+  then
+    gcloud config set auth/credential_file_override "$CRED_FILE" --quiet 2>/dev/null || true
+    ( umask 177; echo 'export GOOGLE_APPLICATION_CREDENTIALS="$HOME/.config/gcloud/application_default_credentials.json"' > ~/.config/gcloud/auth.env )
+    echo "✓ gcloud auth"
+  else
+    echo "⚠ GOOGLE_APPLICATION_CREDENTIALS_JSON is not valid JSON, skipping gcloud auth"
+  fi
 else
   echo "⚠ GOOGLE_APPLICATION_CREDENTIALS_JSON not set, skipping"
 fi
