@@ -62,6 +62,8 @@ report_secret() {
 }
 report_secret CLAUDE_CODE_OAUTH_TOKEN
 report_secret CLAUDE_CODE_OAUTH_TOKEN_B64
+report_secret GCP_SERVICE_ACCOUNT_KEY
+report_secret GCP_SERVICE_ACCOUNT_KEY_B64
 report_secret GOOGLE_APPLICATION_CREDENTIALS_JSON
 report_secret GOOGLE_APPLICATION_CREDENTIALS_JSON_B64
 dbg "env var names visible: $(env 2>/dev/null | sed 's/=.*//' | sort | tr '\n' ' ')"
@@ -79,7 +81,8 @@ b64_into() {
     dbg "WARN: $src is set but not valid base64 — ignoring it"
   fi
 }
-b64_into CLAUDE_CODE_OAUTH_TOKEN_B64          CLAUDE_CODE_OAUTH_TOKEN
+b64_into CLAUDE_CODE_OAUTH_TOKEN_B64             CLAUDE_CODE_OAUTH_TOKEN
+b64_into GCP_SERVICE_ACCOUNT_KEY_B64             GCP_SERVICE_ACCOUNT_KEY
 b64_into GOOGLE_APPLICATION_CREDENTIALS_JSON_B64 GOOGLE_APPLICATION_CREDENTIALS_JSON
 
 # ---------------------------------------------------------------------------
@@ -104,10 +107,57 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# gcloud: write ADC user credentials from env var, configure CLI to use them.
-# GOOGLE_APPLICATION_CREDENTIALS_JSON holds the authorized_user JSON (refresh token).
+# gcloud credentials.
+#   Preferred: GCP_SERVICE_ACCOUNT_KEY — a service_account key JSON (best for
+#   headless automation). Written to a 0600 file, activated in gcloud, and
+#   exported via GOOGLE_APPLICATION_CREDENTIALS so client libraries (ADC) use it.
+#   Fallback: GOOGLE_APPLICATION_CREDENTIALS_JSON — authorized_user ADC JSON.
+#   Each accepts a *_B64 variant (see header note on shell-quoting safety).
 # ---------------------------------------------------------------------------
-if [ -n "${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" ]; then
+if [ -n "${GCP_SERVICE_ACCOUNT_KEY:-}" ]; then
+  mkdir -p ~/.config/gcloud
+  SA_FILE=~/.config/gcloud/service_account.json
+  if GCP_SERVICE_ACCOUNT_KEY="$GCP_SERVICE_ACCOUNT_KEY" SA_FILE="$SA_FILE" python3 - <<'EOF'
+import json, os, sys
+
+raw = os.environ["GCP_SERVICE_ACCOUNT_KEY"].strip()
+# Tolerate an extra layer of JSON-string encoding (each " became \").
+obj = None
+for _ in range(2):
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError:
+        obj = None
+        break
+    if isinstance(obj, dict):
+        break
+    if isinstance(obj, str):
+        raw = obj
+        continue
+    obj = None
+    break
+
+if not isinstance(obj, dict) or obj.get("type") != "service_account":
+    print("  · [debug] GCP_SERVICE_ACCOUNT_KEY is not a service_account JSON", file=sys.stderr)
+    raise SystemExit(1)
+
+print("  · [debug] service account: %s (project=%s)"
+      % (obj.get("client_email"), obj.get("project_id")), file=sys.stderr)
+fd = os.open(os.environ["SA_FILE"], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as f:
+    json.dump(obj, f)
+EOF
+  then
+    gcloud auth activate-service-account --key-file="$SA_FILE" --quiet 2>/dev/null \
+      && dbg "activated service account in gcloud" \
+      || dbg "WARN: gcloud auth activate-service-account failed (gcloud missing?)"
+    ( umask 177; echo 'export GOOGLE_APPLICATION_CREDENTIALS="$HOME/.config/gcloud/service_account.json"' > ~/.config/gcloud/auth.env )
+    dbg "wrote $SA_FILE and ~/.config/gcloud/auth.env"
+    log "✓ gcloud auth (service account)"
+  else
+    log "⚠ GCP_SERVICE_ACCOUNT_KEY is not valid service_account JSON, skipping"
+  fi
+elif [ -n "${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" ]; then
   mkdir -p ~/.config/gcloud
   CRED_FILE=~/.config/gcloud/application_default_credentials.json
   # The secret sometimes arrives wrapped in an extra layer of quotes or
@@ -158,7 +208,7 @@ EOF
     log "⚠ GOOGLE_APPLICATION_CREDENTIALS_JSON is not valid JSON, skipping gcloud auth"
   fi
 else
-  log "⚠ GOOGLE_APPLICATION_CREDENTIALS_JSON not set, skipping"
+  log "⚠ no GCP credentials set (GCP_SERVICE_ACCOUNT_KEY / GOOGLE_APPLICATION_CREDENTIALS_JSON), skipping"
 fi
 
 # ---------------------------------------------------------------------------
