@@ -233,17 +233,29 @@ EOF
 log "✓ Claude onboarding skipped"
 
 # ---------------------------------------------------------------------------
-# Ensure zsh is installed (idempotent). Best-effort across package managers;
-# skip cleanly if none is usable so the rest of the install still succeeds.
+# Ensure zsh is installed (idempotent, best-effort).
+#
+# This is deliberately NON-FATAL: installing a system package needs a package
+# manager AND the privileges to use it, neither of which is guaranteed. A
+# failure here (no root/sudo, no package manager, offline) must NOT abort the
+# whole dotfiles install — hence the install logic lives in a function called
+# with `|| true`, which also suspends `set -e` for everything inside it.
 # ---------------------------------------------------------------------------
-if command -v zsh >/dev/null 2>&1; then
-  log "✓ Zsh present ($(zsh --version 2>/dev/null | head -1))"
-else
-  # Use sudo only when not already root and sudo exists.
-  SUDO=""
-  if [ "$(id -u 2>/dev/null || echo 0)" != "0" ] && command -v sudo >/dev/null 2>&1; then
-    SUDO="sudo"
+_install_zsh() {
+  # Privilege prefix: nothing if root; `sudo -n` (never prompt) if available.
+  # Bail early with a clear message when a package manager would need root but
+  # we have no way to elevate — otherwise apt/apk just print a raw
+  # "Permission denied" and look like a hard error.
+  local SUDO=""
+  if [ "$(id -u 2>/dev/null || echo 0)" != "0" ]; then
+    if command -v sudo >/dev/null 2>&1; then
+      SUDO="sudo -n"
+    else
+      dbg "not root and no sudo — cannot install system packages"
+      return 1
+    fi
   fi
+
   if command -v apt-get >/dev/null 2>&1; then
     dbg "installing zsh via apt-get"
     $SUDO apt-get update -qq && $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zsh
@@ -264,12 +276,18 @@ else
     brew install zsh
   else
     dbg "no supported package manager found"
+    return 1
   fi
+}
 
+if command -v zsh >/dev/null 2>&1; then
+  log "✓ Zsh present ($(zsh --version 2>/dev/null | head -1))"
+else
+  _install_zsh || true   # `|| true` keeps a failed install from aborting set -e
   if command -v zsh >/dev/null 2>&1; then
     log "✓ Zsh installed"
   else
-    log "⚠ could not install zsh (no usable package manager?), skipping"
+    log "⚠ could not install zsh (needs root/sudo + a package manager) — skipping, config below still applies"
   fi
 fi
 
