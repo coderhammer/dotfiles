@@ -233,6 +233,47 @@ EOF
 log "✓ Claude onboarding skipped"
 
 # ---------------------------------------------------------------------------
+# Ensure zsh is installed (idempotent). Best-effort across package managers;
+# skip cleanly if none is usable so the rest of the install still succeeds.
+# ---------------------------------------------------------------------------
+if command -v zsh >/dev/null 2>&1; then
+  log "✓ Zsh present ($(zsh --version 2>/dev/null | head -1))"
+else
+  # Use sudo only when not already root and sudo exists.
+  SUDO=""
+  if [ "$(id -u 2>/dev/null || echo 0)" != "0" ] && command -v sudo >/dev/null 2>&1; then
+    SUDO="sudo"
+  fi
+  if command -v apt-get >/dev/null 2>&1; then
+    dbg "installing zsh via apt-get"
+    $SUDO apt-get update -qq && $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zsh
+  elif command -v apk >/dev/null 2>&1; then
+    dbg "installing zsh via apk"
+    $SUDO apk add --no-cache zsh
+  elif command -v dnf >/dev/null 2>&1; then
+    dbg "installing zsh via dnf"
+    $SUDO dnf install -y zsh
+  elif command -v yum >/dev/null 2>&1; then
+    dbg "installing zsh via yum"
+    $SUDO yum install -y zsh
+  elif command -v pacman >/dev/null 2>&1; then
+    dbg "installing zsh via pacman"
+    $SUDO pacman -Sy --noconfirm zsh
+  elif command -v brew >/dev/null 2>&1; then
+    dbg "installing zsh via brew"
+    brew install zsh
+  else
+    dbg "no supported package manager found"
+  fi
+
+  if command -v zsh >/dev/null 2>&1; then
+    log "✓ Zsh installed"
+  else
+    log "⚠ could not install zsh (no usable package manager?), skipping"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Zsh (idempotent: append once, guarded by a marker)
 # ---------------------------------------------------------------------------
 ZSH_MARKER="# >>> dotfiles zsh >>>"
