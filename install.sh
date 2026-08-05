@@ -86,12 +86,68 @@ b64_into GCP_SERVICE_ACCOUNT_KEY_B64             GCP_SERVICE_ACCOUNT_KEY
 b64_into GOOGLE_APPLICATION_CREDENTIALS_JSON_B64 GOOGLE_APPLICATION_CREDENTIALS_JSON
 
 # ---------------------------------------------------------------------------
-# Claude Code
+# Claude Code — where its state lives
+#
+# By default Claude Code keeps everything in ~/.claude (+ ~/.claude.json):
+# settings, credentials, and the conversation transcripts under `projects/`.
+# On a Spunto worker that directory sits in the container's writable layer, so
+# it is wiped whenever the container is recreated (worker rebuild) — while
+# /workspace is a named volume that survives. CLAUDE_CONFIG_DIR moves the whole
+# lot (transcripts and .claude.json included) onto that volume.
+#
+# NOT /workspace/.claude: the idea→prod pipeline uses that exact path for its own
+# sessions and `rm -rf`s it when a card closes / a worker returns to the pool
+# (automations, claudeSpuntoWorker.ts). A distinct directory keeps interactive
+# sessions out of that blast radius — and avoids Claude reading the same folder
+# as *project* settings when the cwd is /workspace.
+#
+# Off a worker (no /workspace), nothing changes: default ~/.claude.
 # ---------------------------------------------------------------------------
-mkdir -p ~/.claude
+if [ -z "${CLAUDE_CONFIG_DIR:-}" ] && [ -d /workspace ] && [ -w /workspace ]; then
+  CLAUDE_CONFIG_DIR=/workspace/.claude-home
+  dbg "no CLAUDE_CONFIG_DIR set, defaulting to $CLAUDE_CONFIG_DIR (/workspace volume)"
+fi
+
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  CLAUDE_DIR="$CLAUDE_CONFIG_DIR"
+  CLAUDE_JSON="$CLAUDE_CONFIG_DIR/.claude.json"
+else
+  CLAUDE_DIR="$HOME/.claude"
+  CLAUDE_JSON="$HOME/.claude.json"
+fi
+
+# One-shot migration: first run on a worker that already has a home-dir config —
+# carry it over rather than starting from an empty history. Never overwrites an
+# existing target (so re-running install.sh is a no-op here).
+if [ "$CLAUDE_DIR" != "$HOME/.claude" ] && [ ! -e "$CLAUDE_DIR" ] && [ -d "$HOME/.claude" ]; then
+  mkdir -p "$CLAUDE_DIR"
+  cp -a "$HOME/.claude/." "$CLAUDE_DIR/" 2>/dev/null || true
+  [ -f "$HOME/.claude.json" ] && [ ! -f "$CLAUDE_JSON" ] && cp -a "$HOME/.claude.json" "$CLAUDE_JSON"
+  log "✓ Claude state migrated to $CLAUDE_DIR"
+fi
+
+mkdir -p "$CLAUDE_DIR"
+
+# Persist the choice for every shell. Same pattern as token.env below, but also
+# appended to ~/.profile: `bash -l` (what Spunto's worker exec API runs) reads
+# ~/.profile and never ~/.zshrc.
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  mkdir -p ~/.config/claude
+  printf 'export CLAUDE_CONFIG_DIR=%q\n' "$CLAUDE_CONFIG_DIR" > ~/.config/claude/config-dir.env
+  PROFILE_MARKER="# >>> dotfiles claude config dir >>>"
+  if ! grep -qF "$PROFILE_MARKER" ~/.profile 2>/dev/null; then
+    {
+      echo ""
+      echo "$PROFILE_MARKER"
+      echo '[ -f "$HOME/.config/claude/config-dir.env" ] && . "$HOME/.config/claude/config-dir.env"'
+      echo "# <<< dotfiles claude config dir <<<"
+    } >> ~/.profile
+  fi
+  log "✓ Claude config dir → $CLAUDE_CONFIG_DIR"
+fi
 
 # Settings
-cp "$DOTFILES_DIR/claude/settings.json" ~/.claude/settings.json
+cp "$DOTFILES_DIR/claude/settings.json" "$CLAUDE_DIR/settings.json"
 log "✓ Claude settings"
 
 # Auth: long-lived OAuth token from `claude setup-token`.
@@ -214,10 +270,10 @@ fi
 # ---------------------------------------------------------------------------
 # Skip onboarding wizard on first launch
 # ---------------------------------------------------------------------------
-python3 - <<'EOF'
+CLAUDE_JSON="$CLAUDE_JSON" python3 - <<'EOF'
 import json, os
 
-path = os.path.expanduser("~/.claude.json")
+path = os.environ["CLAUDE_JSON"]
 patch = {"hasCompletedOnboarding": True, "lastOnboardingVersion": "2.1.92"}
 
 data = {}
