@@ -103,6 +103,21 @@ b64_into GOOGLE_APPLICATION_CREDENTIALS_JSON_B64 GOOGLE_APPLICATION_CREDENTIALS_
 #
 # Off a worker (no /workspace), nothing changes: default ~/.claude.
 # ---------------------------------------------------------------------------
+# A value coming from the environment (a Spunto account-level secret, say) is
+# NOT under this script's control, unlike the default below: sanitize it before
+# anything uses it. A pasted secret can carry trailing whitespace/newline, and a
+# relative path would resolve against each process's cwd — install.sh would
+# write settings to one directory and `claude` would read another, per project.
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  CLAUDE_CONFIG_DIR="$(printf '%s' "$CLAUDE_CONFIG_DIR" | tr -d '\r\n' | sed 's/[[:space:]]*$//')"
+  case "$CLAUDE_CONFIG_DIR" in
+    /*) ;;
+    "") ;;
+    *)  log "⚠ CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR is not an absolute path, ignoring it"
+        CLAUDE_CONFIG_DIR="" ;;
+  esac
+fi
+
 if [ -z "${CLAUDE_CONFIG_DIR:-}" ] && [ -d /workspace ] && [ -w /workspace ]; then
   CLAUDE_CONFIG_DIR=/workspace/.claude-home
   dbg "no CLAUDE_CONFIG_DIR set, defaulting to $CLAUDE_CONFIG_DIR (/workspace volume)"
@@ -114,6 +129,20 @@ if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
 else
   CLAUDE_DIR="$HOME/.claude"
   CLAUDE_JSON="$HOME/.claude.json"
+fi
+
+# The directory must be usable before anything writes to it. Under `set -e` a
+# failing `mkdir` here would abort the WHOLE install — no OAuth token, no gcloud
+# auth, no zsh config — over a directory Claude Code could have done without.
+# The auto-default above is guarded by `-w /workspace`; a value handed to us is
+# not, so check it and fall back to the home directory rather than dying.
+if [ "$CLAUDE_DIR" != "$HOME/.claude" ]; then
+  if ! mkdir -p "$CLAUDE_DIR" 2>/dev/null || [ ! -w "$CLAUDE_DIR" ]; then
+    log "⚠ CLAUDE_CONFIG_DIR=$CLAUDE_DIR is not usable (cannot create/write), falling back to ~/.claude"
+    CLAUDE_CONFIG_DIR=""
+    CLAUDE_DIR="$HOME/.claude"
+    CLAUDE_JSON="$HOME/.claude.json"
+  fi
 fi
 
 # One-shot migration: first run on a worker that already has a home-dir config —
