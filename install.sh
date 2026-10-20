@@ -103,8 +103,10 @@ b64_into GOOGLE_APPLICATION_CREDENTIALS_JSON_B64 GOOGLE_APPLICATION_CREDENTIALS_
 #
 # Off a worker (no /workspace), nothing changes: default ~/.claude.
 # ---------------------------------------------------------------------------
+CLAUDE_CONFIG_DIR_DEFAULTED=
 if [ -z "${CLAUDE_CONFIG_DIR:-}" ] && [ -d /workspace ] && [ -w /workspace ]; then
   CLAUDE_CONFIG_DIR=/workspace/.claude-home
+  CLAUDE_CONFIG_DIR_DEFAULTED=1
   dbg "no CLAUDE_CONFIG_DIR set, defaulting to $CLAUDE_CONFIG_DIR (/workspace volume)"
 fi
 
@@ -128,10 +130,11 @@ fi
 
 mkdir -p "$CLAUDE_DIR"
 
-# Persist the choice for every shell. Same pattern as token.env below, but also
-# appended to ~/.profile: `bash -l` (what Spunto's worker exec API runs) reads
-# ~/.profile and never ~/.zshrc.
-if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+# Persist the default for every shell, also through ~/.profile: `bash -l` (what
+# Spunto's worker exec API runs) reads ~/.profile and never ~/.zshrc. Only the
+# default: a CLAUDE_CONFIG_DIR that came from the environment is injected into
+# every process at each start, and a copy frozen here would shadow a later change.
+if [ -n "$CLAUDE_CONFIG_DIR_DEFAULTED" ]; then
   mkdir -p ~/.config/claude
   printf 'export CLAUDE_CONFIG_DIR=%q\n' "$CLAUDE_CONFIG_DIR" > ~/.config/claude/config-dir.env
   PROFILE_MARKER="# >>> dotfiles claude config dir >>>"
@@ -144,22 +147,23 @@ if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
     } >> ~/.profile
   fi
   log "✓ Claude config dir → $CLAUDE_CONFIG_DIR"
+else
+  rm -f ~/.config/claude/config-dir.env
 fi
 
 # Settings
 cp "$DOTFILES_DIR/claude/settings.json" "$CLAUDE_DIR/settings.json"
 log "✓ Claude settings"
 
-# Auth: long-lived OAuth token from `claude setup-token`.
-# Passed as a secret env var at install time, written to a 0600 file that
-# zsh sources on every shell start (so `claude` never prompts to re-login).
+# Auth: long-lived OAuth token from `claude setup-token`, read by `claude` straight
+# from CLAUDE_CODE_OAUTH_TOKEN, which Spunto injects into every process at each
+# start. Never copied to a file: the copy (the former ~/.config/claude/token.env)
+# outlived a rotation of the secret and shadowed the new value in every shell.
+rm -f ~/.config/claude/token.env
 if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-  mkdir -p ~/.config/claude
-  ( umask 177; printf 'export CLAUDE_CODE_OAUTH_TOKEN=%q\n' "$CLAUDE_CODE_OAUTH_TOKEN" > ~/.config/claude/token.env )
-  dbg "wrote ~/.config/claude/token.env"
-  log "✓ Claude OAuth token"
+  log "✓ Claude OAuth token (from the environment)"
 else
-  log "⚠ CLAUDE_CODE_OAUTH_TOKEN not set, skipping"
+  log "⚠ CLAUDE_CODE_OAUTH_TOKEN not set, claude will ask to log in"
 fi
 
 # ---------------------------------------------------------------------------
