@@ -66,7 +66,9 @@ report_secret GCP_SERVICE_ACCOUNT_KEY
 report_secret GCP_SERVICE_ACCOUNT_KEY_B64
 report_secret GOOGLE_APPLICATION_CREDENTIALS_JSON
 report_secret GOOGLE_APPLICATION_CREDENTIALS_JSON_B64
-dbg "env var names visible: $(env 2>/dev/null | sed 's/=.*//' | sort | tr '\n' ' ')"
+# Les NOMS seulement, par le shell : `env | sed 's/=.*//'` ne coupait que la première ligne de chaque variable, et
+# les lignes suivantes d'une valeur multiligne (une clé privée) partaient en clair dans le journal de setup.
+dbg "env var names visible: $(compgen -e 2>/dev/null | sort | tr '\n' ' ')"
 
 # Decode base64 secret variants into their plain counterparts (preferred form,
 # because base64 is shell-quoting-safe — see header note).
